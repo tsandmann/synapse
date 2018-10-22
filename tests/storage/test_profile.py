@@ -24,33 +24,33 @@ from tests.utils import setup_test_homeserver
 
 
 class ProfileStoreTestCase(unittest.TestCase):
-
     @defer.inlineCallbacks
     def setUp(self):
-        hs = yield setup_test_homeserver()
+        hs = yield setup_test_homeserver(self.addCleanup)
 
-        self.store = ProfileStore(None, hs)
+        self.store = ProfileStore(hs.get_db_conn(), hs)
 
         self.u_frank = UserID.from_string("@frank:test")
 
     @defer.inlineCallbacks
     def test_displayname(self):
+        yield self.store.create_profile(self.u_frank.localpart)
         yield self.store.set_profile_displayname(
             self.u_frank.localpart, "Frank", 1,
         )
 
         self.assertEquals(
-            "Frank",
-            (yield self.store.get_profile_displayname(self.u_frank.localpart))
+            "Frank", (yield self.store.get_profile_displayname(self.u_frank.localpart))
         )
 
     @defer.inlineCallbacks
     def test_avatar_url(self):
+        yield self.store.create_profile(self.u_frank.localpart)
         yield self.store.set_profile_avatar_url(
             self.u_frank.localpart, "http://my.site/here", 1,
         )
 
         self.assertEquals(
             "http://my.site/here",
-            (yield self.store.get_profile_avatar_url(self.u_frank.localpart))
+            (yield self.store.get_profile_avatar_url(self.u_frank.localpart)),
         )

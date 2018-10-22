@@ -20,7 +20,7 @@ from signedjson.key import decode_verify_key_bytes
 from signedjson.sign import SignatureVerifyException, verify_signed_json
 from unpaddedbase64 import decode_base64
 
-from synapse.api.constants import EventTypes, JoinRules, Membership
+from synapse.api.constants import KNOWN_ROOM_VERSIONS, EventTypes, JoinRules, Membership
 from synapse.api.errors import AuthError, EventSizeError, SynapseError
 from synapse.types import UserID, get_domain_from_id
 
@@ -83,6 +83,14 @@ def check(event, auth_events, do_sig_check=True, do_size_check=True):
                 403,
                 "Creation event's room_id domain does not match sender's"
             )
+
+        room_version = event.content.get("room_version", "1")
+        if room_version not in KNOWN_ROOM_VERSIONS:
+            raise AuthError(
+                403,
+                "room appears to have unsupported version %s" % (
+                    room_version,
+                ))
         # FIXME
         logger.debug("Allowing! %s", event)
         return
@@ -90,9 +98,9 @@ def check(event, auth_events, do_sig_check=True, do_size_check=True):
     creation_event = auth_events.get((EventTypes.Create, ""), None)
 
     if not creation_event:
-        raise SynapseError(
+        raise AuthError(
             403,
-            "Room %r does not exist" % (event.room_id,)
+            "No create event in auth events",
         )
 
     creating_domain = get_domain_from_id(event.room_id)
@@ -147,10 +155,7 @@ def check(event, auth_events, do_sig_check=True, do_size_check=True):
 
         if user_level < invite_level:
             raise AuthError(
-                403, (
-                    "You cannot issue a third party invite for %s." %
-                    (event.content.display_name,)
-                )
+                403, "You don't have permission to invite users",
             )
         else:
             logger.debug("Allowing! %s", event)
@@ -297,7 +302,7 @@ def _is_membership_change_allowed(event, auth_events):
 
             if user_level < invite_level:
                 raise AuthError(
-                    403, "You cannot invite user %s." % target_user_id
+                    403, "You don't have permission to invite users",
                 )
     elif Membership.JOIN == membership:
         # Joins are valid iff caller == target and they were:

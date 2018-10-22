@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import threading
 
 from prometheus_client.core import Counter, Histogram
 
@@ -38,7 +39,8 @@ outgoing_responses_counter = Counter(
 )
 
 response_timer = Histogram(
-    "synapse_http_server_response_time_seconds", "sec", ["method", "servlet", "tag"]
+    "synapse_http_server_response_time_seconds", "sec",
+    ["method", "servlet", "tag", "code"],
 )
 
 response_ru_utime = Counter(
@@ -110,6 +112,9 @@ in_flight_requests_db_sched_duration = Counter(
 # The set of all in flight requests, set[RequestMetrics]
 _in_flight_requests = set()
 
+# Protects the _in_flight_requests set from concurrent accesss
+_in_flight_requests_lock = threading.Lock()
+
 
 def _get_in_flight_counts():
     """Returns a count of all in flight requests by (method, server_name)
@@ -119,7 +124,8 @@ def _get_in_flight_counts():
     """
     # Cast to a list to prevent it changing while the Prometheus
     # thread is collecting metrics
-    reqs = list(_in_flight_requests)
+    with _in_flight_requests_lock:
+        reqs = list(_in_flight_requests)
 
     for rm in reqs:
         rm.update_metrics()
@@ -153,10 +159,12 @@ class RequestMetrics(object):
         # to the "in flight" metrics.
         self._request_stats = self.start_context.get_resource_usage()
 
-        _in_flight_requests.add(self)
+        with _in_flight_requests_lock:
+            _in_flight_requests.add(self)
 
-    def stop(self, time_sec, request):
-        _in_flight_requests.discard(self)
+    def stop(self, time_sec, response_code, sent_bytes):
+        with _in_flight_requests_lock:
+            _in_flight_requests.discard(self)
 
         context = LoggingContext.current_context()
 
@@ -171,33 +179,35 @@ class RequestMetrics(object):
                 )
                 return
 
-        outgoing_responses_counter.labels(request.method, str(request.code)).inc()
+        response_code = str(response_code)
 
-        response_count.labels(request.method, self.name, tag).inc()
+        outgoing_responses_counter.labels(self.method, response_code).inc()
 
-        response_timer.labels(request.method, self.name, tag).observe(
+        response_count.labels(self.method, self.name, tag).inc()
+
+        response_timer.labels(self.method, self.name, tag, response_code).observe(
             time_sec - self.start
         )
 
         resource_usage = context.get_resource_usage()
 
-        response_ru_utime.labels(request.method, self.name, tag).inc(
+        response_ru_utime.labels(self.method, self.name, tag).inc(
             resource_usage.ru_utime,
         )
-        response_ru_stime.labels(request.method, self.name, tag).inc(
+        response_ru_stime.labels(self.method, self.name, tag).inc(
             resource_usage.ru_stime,
         )
-        response_db_txn_count.labels(request.method, self.name, tag).inc(
+        response_db_txn_count.labels(self.method, self.name, tag).inc(
             resource_usage.db_txn_count
         )
-        response_db_txn_duration.labels(request.method, self.name, tag).inc(
+        response_db_txn_duration.labels(self.method, self.name, tag).inc(
             resource_usage.db_txn_duration_sec
         )
-        response_db_sched_duration.labels(request.method, self.name, tag).inc(
+        response_db_sched_duration.labels(self.method, self.name, tag).inc(
             resource_usage.db_sched_duration_sec
         )
 
-        response_size.labels(request.method, self.name, tag).inc(request.sentLength)
+        response_size.labels(self.method, self.name, tag).inc(sent_bytes)
 
         # We always call this at the end to ensure that we update the metrics
         # regardless of whether a call to /metrics while the request was in

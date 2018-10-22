@@ -17,9 +17,10 @@ import sys
 import threading
 import time
 
-from six import iteritems, iterkeys, itervalues
+from six import PY2, iteritems, iterkeys, itervalues
 from six.moves import intern, range
 
+from canonicaljson import json
 from prometheus_client import Histogram
 
 from twisted.internet import defer
@@ -311,6 +312,12 @@ class SQLBaseStore(object):
         after_callbacks = []
         exception_callbacks = []
 
+        if LoggingContext.current_context() == LoggingContext.sentinel:
+            logger.warn(
+                "Starting db txn '%s' from sentinel context",
+                desc,
+            )
+
         try:
             result = yield self.runWithConnection(
                 self._new_transaction,
@@ -343,10 +350,9 @@ class SQLBaseStore(object):
         """
         parent_context = LoggingContext.current_context()
         if parent_context == LoggingContext.sentinel:
-            # warning disabled for 0.33.0 release; proper fixes will land imminently.
-            # logger.warn(
-            #    "Running db txn from sentinel context: metrics will be lost",
-            # )
+            logger.warn(
+                "Starting db connection from sentinel context: metrics will be lost",
+            )
             parent_context = None
 
         start_time = time.time()
@@ -1145,17 +1151,16 @@ class SQLBaseStore(object):
         defer.returnValue(retval)
 
     def get_user_count_txn(self, txn):
-        """Get a total number of registerd users in the users list.
+        """Get a total number of registered users in the users list.
 
         Args:
             txn : Transaction object
         Returns:
-            defer.Deferred: resolves to int
+            int : number of users
         """
         sql_count = "SELECT COUNT(*) FROM users WHERE is_guest = 0;"
         txn.execute(sql_count)
-        count = txn.fetchone()[0]
-        defer.returnValue(count)
+        return txn.fetchone()[0]
 
     def _simple_search_list(self, table, term, col, retcols,
                             desc="_simple_search_list"):
@@ -1212,3 +1217,32 @@ class _RollbackButIsFineException(Exception):
     something went wrong.
     """
     pass
+
+
+def db_to_json(db_content):
+    """
+    Take some data from a database row and return a JSON-decoded object.
+
+    Args:
+        db_content (memoryview|buffer|bytes|bytearray|unicode)
+    """
+    # psycopg2 on Python 3 returns memoryview objects, which we need to
+    # cast to bytes to decode
+    if isinstance(db_content, memoryview):
+        db_content = db_content.tobytes()
+
+    # psycopg2 on Python 2 returns buffer objects, which we need to cast to
+    # bytes to decode
+    if PY2 and isinstance(db_content, buffer):
+        db_content = bytes(db_content)
+
+    # Decode it to a Unicode string before feeding it to json.loads, so we
+    # consistenty get a Unicode-containing object out.
+    if isinstance(db_content, (bytes, bytearray)):
+        db_content = db_content.decode('utf8')
+
+    try:
+        return json.loads(db_content)
+    except Exception:
+        logging.warning("Tried to decode '%r' as JSON and failed", db_content)
+        raise

@@ -24,13 +24,10 @@ from synapse.api.constants import EventTypes, Membership
 from synapse.api.errors import AuthError
 from synapse.handlers.presence import format_user_presence_state
 from synapse.metrics import LaterGauge
+from synapse.metrics.background_process_metrics import run_as_background_process
 from synapse.types import StreamToken
-from synapse.util.async import (
-    DeferredTimeoutError,
-    ObservableDeferred,
-    add_timeout_to_deferred,
-)
-from synapse.util.logcontext import PreserveLoggingContext, run_in_background
+from synapse.util.async_helpers import ObservableDeferred, timeout_deferred
+from synapse.util.logcontext import PreserveLoggingContext
 from synapse.util.logutils import log_function
 from synapse.util.metrics import Measure
 from synapse.visibility import filter_events_for_client
@@ -252,7 +249,10 @@ class Notifier(object):
     def _on_new_room_event(self, event, room_stream_id, extra_users=[]):
         """Notify any user streams that are interested in this room event"""
         # poke any interested application service.
-        run_in_background(self._notify_app_services, room_stream_id)
+        run_as_background_process(
+            "notify_app_services",
+            self._notify_app_services, room_stream_id,
+        )
 
         if self.federation_sender:
             self.federation_sender.notify_new_events(room_stream_id)
@@ -274,7 +274,7 @@ class Notifier(object):
             logger.exception("Error notifying application services of event")
 
     def on_new_event(self, stream_key, new_token, users=[], rooms=[]):
-        """ Used to inform listeners that something has happend event wise.
+        """ Used to inform listeners that something has happened event wise.
 
         Will wake up all listeners for the given users and rooms.
         """
@@ -337,7 +337,7 @@ class Notifier(object):
                     # Now we wait for the _NotifierUserStream to be told there
                     # is a new token.
                     listener = user_stream.new_listener(prev_token)
-                    add_timeout_to_deferred(
+                    listener.deferred = timeout_deferred(
                         listener.deferred,
                         (end_time - now) / 1000.,
                         self.hs.get_reactor(),
@@ -354,7 +354,7 @@ class Notifier(object):
                     # Update the prev_token to the current_token since nothing
                     # has happened between the old prev_token and the current_token
                     prev_token = current_token
-                except DeferredTimeoutError:
+                except defer.TimeoutError:
                     break
                 except defer.CancelledError:
                     break
@@ -559,15 +559,16 @@ class Notifier(object):
             if end_time <= now:
                 break
 
-            add_timeout_to_deferred(
-                listener.deferred.addTimeout,
-                (end_time - now) / 1000.,
-                self.hs.get_reactor(),
+            listener.deferred = timeout_deferred(
+                listener.deferred,
+                timeout=(end_time - now) / 1000.,
+                reactor=self.hs.get_reactor(),
             )
+
             try:
                 with PreserveLoggingContext():
                     yield listener.deferred
-            except DeferredTimeoutError:
+            except defer.TimeoutError:
                 break
             except defer.CancelledError:
                 break

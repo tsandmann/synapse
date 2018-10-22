@@ -30,6 +30,7 @@ from .appservice import ApplicationServiceStore, ApplicationServiceTransactionSt
 from .client_ips import ClientIpStore
 from .deviceinbox import DeviceInboxStore
 from .directory import DirectoryStore
+from .e2e_room_keys import EndToEndRoomKeyStore
 from .end_to_end_keys import EndToEndKeyStore
 from .engines import PostgresEngine
 from .event_federation import EventFederationStore
@@ -39,6 +40,7 @@ from .filtering import FilteringStore
 from .group_server import GroupServerStore
 from .keys import KeyStore
 from .media_repository import MediaRepositoryStore
+from .monthly_active_users import MonthlyActiveUsersStore
 from .openid import OpenIdStore
 from .presence import PresenceStore, UserPresenceState
 from .profile import ProfileStore
@@ -66,6 +68,7 @@ class DataStore(RoomMemberStore, RoomStore,
                 PresenceStore, TransactionStore,
                 DirectoryStore, KeyStore, StateStore, SignatureStore,
                 ApplicationServiceStore,
+                EventsStore,
                 EventFederationStore,
                 MediaRepositoryStore,
                 RejectionsStore,
@@ -73,9 +76,9 @@ class DataStore(RoomMemberStore, RoomStore,
                 PusherStore,
                 PushRuleStore,
                 ApplicationServiceTransactionStore,
-                EventsStore,
                 ReceiptsStore,
                 EndToEndKeyStore,
+                EndToEndRoomKeyStore,
                 SearchStore,
                 TagsStore,
                 AccountDataStore,
@@ -87,6 +90,7 @@ class DataStore(RoomMemberStore, RoomStore,
                 UserDirectoryStore,
                 GroupServerStore,
                 UserErasureStore,
+                MonthlyActiveUsersStore,
                 ):
 
     def __init__(self, db_conn, hs):
